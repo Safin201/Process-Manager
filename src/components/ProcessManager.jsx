@@ -17,6 +17,14 @@ const ProcessManager = () => {
   // RR Ready Queue - stores PIDs in FIFO order
   const [readyQueue, setReadyQueue] = useState([]);
   
+  // Refs to track state without causing re-renders
+  const currentProcessRef = useRef(null);
+  const readyQueueRef = useRef([]);
+  const quantumUsedRef = useRef(0);
+  const processesRef = useRef([]);
+  const algorithmRef = useRef('RoundRobin');
+  const timeQuantumRef = useRef(2);
+  
   // State for user-defined process creation
   const [showProcessForm, setShowProcessForm] = useState(false);
   const [newProcessName, setNewProcessName] = useState('');
@@ -162,6 +170,16 @@ const ProcessManager = () => {
     }
   };
 
+  // Update refs whenever state changes
+  useEffect(() => {
+    currentProcessRef.current = currentProcess;
+    readyQueueRef.current = readyQueue;
+    quantumUsedRef.current = quantumUsed;
+    processesRef.current = processes;
+    algorithmRef.current = algorithm;
+    timeQuantumRef.current = timeQuantum;
+  }, [currentProcess, readyQueue, quantumUsed, processes, algorithm, timeQuantum]);
+
   // FIXED: Main scheduling simulation - Proper RR implementation
   useEffect(() => {
     if (!isRunning) {
@@ -175,120 +193,143 @@ const ProcessManager = () => {
     const interval = setInterval(() => {
       setCurrentTime(prevTime => {
         const newTime = prevTime + 1;
+        let shouldScheduleNext = false;
         
         // Update waiting time for all READY processes
         setProcesses(prevProcesses => prevProcesses.map(p => {
-          if (p.state === STATES.READY && p.pid !== currentProcess?.pid) {
+          if (p.state === STATES.READY && p.pid !== currentProcessRef.current?.pid) {
             return { ...p, waitingTime: p.waitingTime + 1 };
           }
           return p;
         }));
 
         // Handle current running process
-        if (currentProcess) {
-          setProcesses(prevProcesses => {
-            const updated = [...prevProcesses];
-            const runningIdx = updated.findIndex(p => p.pid === currentProcess.pid);
-            
-            if (runningIdx !== -1) {
-              // Execute one time unit
-              updated[runningIdx].remainingTime -= 1;
-              updated[runningIdx].cpuTime += 1;
+        if (currentProcessRef.current) {
+          // Check if quantum already expired BEFORE executing another time unit
+          const currentQuantum = quantumUsedRef.current;
+          const quantumWillExpire = algorithmRef.current === 'RoundRobin' && currentQuantum >= timeQuantumRef.current;
+          
+          if (quantumWillExpire) {
+            // Don't execute - preempt immediately
+            setProcesses(prevProcesses => {
+              const updated = [...prevProcesses];
+              const runningIdx = updated.findIndex(p => p.pid === currentProcessRef.current.pid);
               
-              // Prevent negative remaining time
-              if (updated[runningIdx].remainingTime < 0) {
-                updated[runningIdx].remainingTime = 0;
-              }
-
-              // Add to execution history
-              setExecutionHistory(prevHistory => [...prevHistory, {
-                pid: currentProcess.pid,
-                name: currentProcess.name,
-                time: newTime
-              }]);
-
-              const processFinished = updated[runningIdx].remainingTime === 0;
-              const quantumExpired = algorithm === 'RoundRobin' && quantumUsed + 1 >= timeQuantum;
-              
-              if (processFinished) {
-                // Process finished
-                updated[runningIdx].state = STATES.TERMINATED;
-                updated[runningIdx].completionTime = newTime;
-                updated[runningIdx].turnaroundTime = newTime - updated[runningIdx].arrivalTime;
-                
-                // Remove from ready queue
-                setReadyQueue(prevQueue => prevQueue.filter(pid => pid !== currentProcess.pid));
-                
-                // Schedule clearing current process
-                setTimeout(() => {
-                  setCurrentProcess(null);
-                  setQuantumUsed(0);
-                }, 10);
-              } else if (quantumExpired) {
-                // Quantum expired - move back to ready queue
+              if (runningIdx !== -1) {
+                // Move back to ready queue without executing more
                 updated[runningIdx].state = STATES.READY;
                 updated[runningIdx].lastReadyTime = newTime;
+              }
+              return updated;
+            });
+            
+            // Move to end of RR queue
+            setReadyQueue(prevQueue => {
+              const newQueue = prevQueue.filter(pid => pid !== currentProcessRef.current.pid);
+              return [...newQueue, currentProcessRef.current.pid];
+            });
+            
+            setCurrentProcess(null);
+            setQuantumUsed(0);
+            shouldScheduleNext = true;
+          } else {
+            // Execute one time unit
+            setProcesses(prevProcesses => {
+              const updated = [...prevProcesses];
+              const runningIdx = updated.findIndex(p => p.pid === currentProcessRef.current.pid);
+              
+              if (runningIdx !== -1) {
+                updated[runningIdx].remainingTime -= 1;
+                updated[runningIdx].cpuTime += 1;
                 
-                // Move to end of RR queue
-                setReadyQueue(prevQueue => {
-                  const newQueue = prevQueue.filter(pid => pid !== currentProcess.pid);
-                  return [...newQueue, currentProcess.pid];
-                });
+                // Prevent negative remaining time
+                if (updated[runningIdx].remainingTime < 0) {
+                  updated[runningIdx].remainingTime = 0;
+                }
+
+                // Add to execution history
+                setExecutionHistory(prevHistory => [...prevHistory, {
+                  pid: currentProcessRef.current.pid,
+                  name: currentProcessRef.current.name,
+                  time: newTime
+                }]);
+
+                const processFinished = updated[runningIdx].remainingTime === 0;
                 
-                // Schedule clearing current process
-                setTimeout(() => {
+                if (processFinished) {
+                  // Process finished
+                  updated[runningIdx].state = STATES.TERMINATED;
+                  updated[runningIdx].completionTime = newTime;
+                  updated[runningIdx].turnaroundTime = newTime - updated[runningIdx].arrivalTime;
+                  
+                  // Remove from ready queue
+                  setReadyQueue(prevQueue => prevQueue.filter(pid => pid !== currentProcessRef.current.pid));
                   setCurrentProcess(null);
                   setQuantumUsed(0);
-                }, 10);
-              } else {
-                // Still running, increment quantum used
-                setQuantumUsed(prev => prev + 1);
+                  shouldScheduleNext = true;
+                } else {
+                  // Increment quantum used for this time unit
+                  const newQuantumUsed = quantumUsedRef.current + 1;
+                  setQuantumUsed(newQuantumUsed);
+                }
               }
-            }
-            
-            return updated;
-          });
+              
+              return updated;
+            });
+          }
+        } else {
+          // No current process, schedule next immediately
+          shouldScheduleNext = true;
         }
 
-        // Schedule next process if no current process
-        setTimeout(() => {
-          if (!currentProcess) {
-            const nextProc = getNextProcess();
-            
-            if (nextProc) {
-              setCurrentProcess(nextProc);
-              setQuantumUsed(1); // Start at 1 since we're executing immediately
-              
-              // Update process to RUNNING state
-              setProcesses(prevProcesses => prevProcesses.map(p => 
-                p.pid === nextProc.pid 
-                  ? { 
-                      ...p, 
-                      state: STATES.RUNNING,
-                      startTime: p.startTime === null ? newTime : p.startTime
-                    } 
-                  : p
-              ));
-              
-              // Remove from front of RR queue
-              if (algorithm === 'RoundRobin') {
-                setReadyQueue(prevQueue => {
-                  if (prevQueue.length > 0 && prevQueue[0] === nextProc.pid) {
-                    return prevQueue.slice(1);
-                  }
-                  // If not at front, find and remove it
-                  const index = prevQueue.indexOf(nextProc.pid);
-                  if (index !== -1) {
-                    const newQueue = [...prevQueue];
-                    newQueue.splice(index, 1);
-                    return newQueue;
-                  }
-                  return prevQueue;
-                });
+        // Schedule next process if needed
+        if (shouldScheduleNext) {
+          const readyProcesses = processesRef.current.filter(p => p.state === STATES.READY);
+          
+          if (readyProcesses.length === 0) return newTime;
+          
+          let nextProc = null;
+          
+          switch (algorithmRef.current) {
+            case 'FCFS':
+              nextProc = readyProcesses.sort((a, b) => a.arrivalTime - b.arrivalTime)[0];
+              break;
+            case 'SJF':
+              nextProc = readyProcesses.sort((a, b) => a.remainingTime - b.remainingTime)[0];
+              break;
+            case 'Priority':
+              nextProc = readyProcesses.sort((a, b) => a.priority - b.priority)[0];
+              break;
+            case 'RoundRobin':
+              if (readyQueueRef.current.length > 0) {
+                nextProc = readyProcesses.find(p => p.pid === readyQueueRef.current[0]);
               }
+              break;
+            default:
+              nextProc = readyProcesses[0];
+          }
+          
+          if (nextProc) {
+            setCurrentProcess(nextProc);
+            setQuantumUsed(0);
+            
+            // Update process to RUNNING state
+            setProcesses(prevProcesses => prevProcesses.map(p => 
+              p.pid === nextProc.pid 
+                ? { 
+                    ...p, 
+                    state: STATES.RUNNING,
+                    startTime: p.startTime === null ? newTime : p.startTime
+                  } 
+                : p
+            ));
+            
+            // Remove from front of RR queue
+            if (algorithmRef.current === 'RoundRobin') {
+              setReadyQueue(prevQueue => prevQueue.slice(1));
             }
           }
-        }, 10);
+        }
 
         return newTime;
       });
@@ -299,7 +340,7 @@ const ProcessManager = () => {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRunning, currentProcess, algorithm, timeQuantum, quantumUsed, readyQueue]);
+  }, [isRunning]);
 
   // Handle algorithm change
   useEffect(() => {
