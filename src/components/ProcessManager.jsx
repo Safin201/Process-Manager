@@ -103,19 +103,30 @@ const ProcessManager = () => {
     if (readyProcesses.length === 0) return null;
     
     switch (algorithm) {
+      // ===== FCFS (First Come First Serve) ALGORITHM =====
+      // Select process with earliest arrival time
       case 'FCFS':
         return readyProcesses.sort((a, b) => a.arrivalTime - b.arrivalTime)[0];
+      
+      // ===== SJF (Shortest Job First) ALGORITHM =====
+      // Select process with shortest remaining time
       case 'SJF':
         return readyProcesses.sort((a, b) => a.remainingTime - b.remainingTime)[0];
+      
+      // ===== PRIORITY SCHEDULING ALGORITHM =====
+      // Select process with lowest priority number (highest priority)
       case 'Priority':
         return readyProcesses.sort((a, b) => a.priority - b.priority)[0];
+      
+      // ===== ROUND ROBIN (RR) ALGORITHM =====
+      // Get next process from FIFO queue based on time quantum
       case 'RoundRobin':
-        // Get from FIFO queue
         if (readyQueue.length > 0) {
           const nextPid = readyQueue[0];
           return readyProcesses.find(p => p.pid === nextPid);
         }
         return null;
+      
       default:
         return readyProcesses[0];
     }
@@ -205,7 +216,8 @@ const ProcessManager = () => {
         if (!currentProcessRef.current || shouldPreempt) {
           setCurrentProcess(prevCP => {
             if (shouldPreempt && prevCP) {
-              // Preempt the current process
+              // ===== ROUND ROBIN PREEMPTION =====
+              // When quantum expires, move current process back to ready queue
               setProcesses(prevProcesses => 
                 prevProcesses.map(p =>
                   p.pid === prevCP.pid 
@@ -229,20 +241,32 @@ const ProcessManager = () => {
               let nextProc = null;
               
               switch (algorithmRef.current) {
+                // ===== FCFS (First Come First Serve) ALGORITHM =====
+                // Select process that arrived first
                 case 'FCFS':
                   nextProc = readyProcesses.sort((a, b) => a.arrivalTime - b.arrivalTime)[0];
                   break;
+                
+                // ===== SJF (Shortest Job First) ALGORITHM =====
+                // Select process with shortest remaining burst time
                 case 'SJF':
                   nextProc = readyProcesses.sort((a, b) => a.remainingTime - b.remainingTime)[0];
                   break;
+                
+                // ===== PRIORITY SCHEDULING ALGORITHM =====
+                // Select process with highest priority (lowest priority number)
                 case 'Priority':
                   nextProc = readyProcesses.sort((a, b) => a.priority - b.priority)[0];
                   break;
+                
+                // ===== ROUND ROBIN (RR) ALGORITHM =====
+                // Select process from FIFO ready queue
                 case 'RoundRobin':
                   if (readyQueueRef.current.length > 0) {
                     nextProc = readyProcesses.find(p => p.pid === readyQueueRef.current[0]);
                   }
                   break;
+                
                 default:
                   nextProc = readyProcesses[0];
               }
@@ -331,65 +355,25 @@ const ProcessManager = () => {
     };
   }, [isRunning]);
 
-  // Handle algorithm change
+  // ===== ALGORITHM CHANGE HANDLER =====
+  // Handle switching between different scheduling algorithms
   useEffect(() => {
+    // ===== ROUND ROBIN (RR) QUEUE SETUP =====
+    // When switching to RR, rebuild FIFO queue with ready processes sorted by arrival time
     if (algorithm === 'RoundRobin') {
-      // Rebuild ready queue for RR based on arrival time
       const readyProcesses = processes
         .filter(p => p.state === STATES.READY)
         .sort((a, b) => a.arrivalTime - b.arrivalTime);
       
       setReadyQueue(readyProcesses.map(p => p.pid));
     } else {
+      // Clear RR queue when switching to other algorithms
       setReadyQueue([]);
     }
   }, [algorithm, processes]);
 
   // Create test processes from your table
-  const createTestProcesses = () => {
-    const testProcesses = [
-      { name: 'P1', burst: 7, priority: 1 },
-      { name: 'P2', burst: 9, priority: 2 },
-      { name: 'P3', burst: 8, priority: 3 },
-      { name: 'P4', burst: 9, priority: 2 },
-      { name: 'P5', burst: 7, priority: 3 },
-      { name: 'P6', burst: 9, priority: 1 },
-      { name: 'P7', burst: 3, priority: 3 },
-      { name: 'P8', burst: 4, priority: 2 },
-      { name: 'P9', burst: 3, priority: 2 },
-      { name: 'P10', burst: 3, priority: 1 }
-    ];
-    
-    resetAll();
-    
-    setTimeout(() => {
-      testProcesses.forEach((proc, index) => {
-        setTimeout(() => {
-          const newProcess = {
-            pid: index + 1,
-            name: proc.name,
-            state: STATES.READY,
-            burstTime: proc.burst,
-            remainingTime: proc.burst,
-            priority: proc.priority,
-            arrivalTime: 0,
-            startTime: null,
-            completionTime: null,
-            waitingTime: 0,
-            turnaroundTime: 0,
-            cpuTime: 0,
-            lastReadyTime: 0,
-          };
-          
-          setProcesses(prev => [...prev, newProcess]);
-          if (algorithm === 'RoundRobin') {
-            setReadyQueue(prev => [...prev, newProcess.pid]);
-          }
-        }, index * 50);
-      });
-      setNextPid(11);
-    }, 100);
-  };
+  // REMOVED: This function has been removed per user request
 
   // Calculate statistics
   const getStats = () => {
@@ -623,18 +607,25 @@ const ProcessManager = () => {
         <div className="flex gap-2 flex-wrap">
           {(() => {
             let queueToShow;
+            // ===== READY QUEUE VISUALIZATION =====
+            // Display queue order based on current scheduling algorithm
             if (algorithm === 'RoundRobin') {
-              // Show RR queue order
+              // ===== ROUND ROBIN QUEUE DISPLAY =====
+              // Show processes in FIFO ready queue order
               queueToShow = readyQueue
                 .map(pid => processes.find(p => p.pid === pid))
                 .filter(Boolean);
             } else {
-              // Show sorted by algorithm
+              // ===== OTHER ALGORITHMS QUEUE DISPLAY =====
+              // Show ready processes sorted by their respective algorithm priority
               queueToShow = processes
                 .filter(p => p.state === STATES.READY)
                 .sort((a, b) => {
+                  // ===== FCFS SORTING =====
                   if (algorithm === 'FCFS') return a.arrivalTime - b.arrivalTime;
+                  // ===== SJF SORTING =====
                   if (algorithm === 'SJF') return a.remainingTime - b.remainingTime;
+                  // ===== PRIORITY SORTING =====
                   if (algorithm === 'Priority') return a.priority - b.priority;
                   return 0;
                 });
@@ -870,13 +861,6 @@ const ProcessManager = () => {
             >
               <Plus size={20} />
               Create Random Process
-            </button>
-
-            <button
-              onClick={createTestProcesses}
-              className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded font-semibold"
-            >
-              Load Test Case (RR Q=2)
             </button>
 
             <button
